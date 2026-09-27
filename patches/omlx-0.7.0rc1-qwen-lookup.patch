@@ -1,0 +1,276 @@
+diff --git a/patches/mlx_lm_mtp/batch_generator.py b/patches/mlx_lm_mtp/batch_generator.py
+index 3d1278d..2c57107 100644
+--- a/patches/mlx_lm_mtp/batch_generator.py
++++ b/patches/mlx_lm_mtp/batch_generator.py
+@@ -21,6 +21,8 @@ from collections import deque
+ from dataclasses import dataclass, field
+ from statistics import median
+ from types import SimpleNamespace
++
++from omlx.patches import p2_lookup as _p2_lookup
+ from typing import Any, Deque, Dict, List, Optional, Tuple
+ 
+ from omlx.prefill_progress import get_prefill_tracker
+@@ -2576,6 +2578,8 @@ def _chain_next_drafts(
+     hidden_rows: Any,
+     committed: Any,
+     prev_buf: Optional[Any],
++    lookup_drafts: Optional[List[int]] = None,
++    vocab: int = 0,
+ ) -> None:
+     """Rebuild committed MTP-head history and draft the next chain.
+ 
+@@ -2611,7 +2615,7 @@ def _chain_next_drafts(
+     procs = _proc_list(gen_batch)
+ 
+     depth = state.controller.cur if state.controller is not None else state.depth
+-    if depth == 0 and not state.mtp_cache:
++    if depth == 0 and not state.mtp_cache and not lookup_drafts:
+         # Depth-0 with a stateless head (no cache to keep warm, e.g. the
+         # gemma4 assistant): skip the fold entirely — on fast backbones its
+         # head forward + trunk norm is a measurable per-step tax (~15% of a
+@@ -2651,6 +2655,11 @@ def _chain_next_drafts(
+     )
+     state.hist_offset += int(n)
+ 
++    if lookup_drafts:
++        # p2 prompt lookup: the head has folded the committed tokens; verify the earlier continuation instead of a chain.
++        _p2_lookup.set_drafts(state, lookup_drafts, vocab)
++        return
++
+     draft_toks: List[Any] = []
+     draft_lps: List[Any] = []
+     draft_accept_lps: List[Any] = []
+@@ -3258,6 +3267,8 @@ def _mtp_next(gen_batch: Any, state: _MtpState) -> Any:
+ 
+ 
+ def _log_mtp_stats(uid: Any, stats: "_MtpStats", finish_reason: str) -> None:
++    if _p2_lookup.ENABLED:
++        _p2_lookup.log_stats(uid, stats)
+     """Emit a one-line summary of MTP draft/verify activity for a finished sequence.
+ 
+     Format chosen to match PR 990's headline metrics, plus component timings
+@@ -3699,8 +3710,8 @@ def _run_verify_cycle_chain(
+ 
+     # --- stats ---
+     state.stats.cycles += 1
+-    if len(state.stats.depth_drafted) < state.depth:
+-        pad = state.depth - len(state.stats.depth_drafted)
++    if len(state.stats.depth_drafted) < max(state.depth, k):
++        pad = max(state.depth, k) - len(state.stats.depth_drafted)
+         state.stats.depth_drafted.extend([0] * pad)
+         state.stats.depth_accepted.extend([0] * pad)
+     for j in range(k):
+@@ -3718,6 +3729,7 @@ def _run_verify_cycle_chain(
+ 
+     def finish(shared_commit_ms=0.0):
+         finish_t0 = time.perf_counter()
++        p2_was_lookup = _p2_lookup.ENABLED and _p2_lookup.was_pending(state)
+         # --- commit: queue emits + cache rollback ---
+         t0 = time.perf_counter()
+         for j in range(m):
+@@ -3766,7 +3778,15 @@ def _run_verify_cycle_chain(
+             else:
+                 draft_jobs.append(job)
+         elif draft_jobs is None:
+-            _chain_next_drafts(gen_batch, state, hidden_rows, committed, prev_buf)
++            p2_drafts = None
++            if _p2_lookup.ENABLED:
++                _p2_lookup.observe(state, p2_was_lookup, k, m)
++                state.stats._p2_lookup_ref = state._p2_lookup
++                p2_drafts = _p2_lookup.propose(gen_batch, state)
++            _chain_next_drafts(
++                gen_batch, state, hidden_rows, committed, prev_buf,
++                lookup_drafts=p2_drafts, vocab=int(combined_lp.shape[-1]),
++            )
+         else:
+             draft_jobs.append((gen_batch, state, hidden_rows, committed, prev_buf))
+         state.next_main = next_main
+@@ -3774,7 +3794,7 @@ def _run_verify_cycle_chain(
+         if materialize_boundary_emit:
+             _materialize_mtp_boundary_emit(gen_batch, state)
+             state.boundary_emit_pending = False
+-        if state.controller is not None:
++        if state.controller is not None and not p2_was_lookup:
+             was_warmup = bool(state.controller._warmup)
+             keepalive = bool(getattr(state.mtp_cache, "fold_keepalive", False))
+             if keepalive:
+diff --git a/patches/p2_lookup.py b/patches/p2_lookup.py
+new file mode 100644
+index 0000000..279afbc
+--- /dev/null
++++ b/patches/p2_lookup.py
+@@ -0,0 +1,173 @@
++"""Phase-2 prompt-lookup drafts inside the MTP chain cycle (after mlx-serve #523/#533, MIT).
++
++When the newest committed tokens (ending in the token the next verify starts from) already occurred earlier in the
++prompt or output, with the match running back at least ``NGRAM`` tokens, the next cycle verifies that earlier
++continuation instead of an MTP chain. The MTP head still folds the committed tokens, so its history stays exact.
++
++Acceptance is the engine's own: greedy compares against the target argmax; stochastic uses the Leviathan/Chen rule
++with a one-hot draft distribution (accept with p(x), residual = p without x), so the output distribution is unchanged.
++
++Gate: tokens-per-second EMAs of lookup cycles (per match-length bucket) vs MTP cycles. Lookup cycles are not fed to
++the MTP depth controller. Singleton chain path only (no batched verify, no block drafters).
++
++Env: OMLX_P2_LOOKUP=1 enables; OMLX_P2_LOOKUP_NGRAM (8), OMLX_P2_LOOKUP_MAX (7), OMLX_P2_LOOKUP_MAX_LONG (= MAX), OMLX_P2_LOOKUP_LONG (32),
++OMLX_P2_LOOKUP_GATE (1; 0 = always take a match).
++"""
++from __future__ import annotations
++
++import logging
++import os
++import time
++
++logger = logging.getLogger(__name__)
++
++ENABLED = os.environ.get("OMLX_P2_LOOKUP", "0") == "1"
++NGRAM = int(os.environ.get("OMLX_P2_LOOKUP_NGRAM", "8"))
++MAX_DRAFTS = int(os.environ.get("OMLX_P2_LOOKUP_MAX", "7"))
++# Drafts when the match runs back >= LONG_MATCH tokens (mlx-serve #533 uses 14). Defaults to MAX_DRAFTS: GLM's indexer pool can
++# undo at most an 8-row verify block, so only raise it for models without that limit (Qwen: OMLX_P2_LOOKUP_MAX_LONG=14).
++MAX_LONG = int(os.environ.get("OMLX_P2_LOOKUP_MAX_LONG", str(MAX_DRAFTS)))
++LONG_MATCH = int(os.environ.get("OMLX_P2_LOOKUP_LONG", "32"))
++GATE = os.environ.get("OMLX_P2_LOOKUP_GATE", "1") == "1"
++_ALPHA = 0.15
++_REPROBE = 16  # matched-but-gated opportunities between forced lookup probes
++# Verify widths (draft count k) already timed in this process. The first cycle at a new width pays one-off Metal kernel
++# compilation (tens of ms), and letting that sample into an EMA made the gate refuse lookups for most of a request.
++_SEEN_K = {"lookup": set(), "mtp": set()}
++
++
++class _Lookup:
++    __slots__ = ("idx", "upto", "pending", "pending_bucket", "last_t", "ema_mtp", "ema_lk", "skipped",
++                 "rounds", "drafted", "accepted", "emitted", "gated")
++
++    def __init__(self):
++        self.idx = {}
++        self.upto = 0  # positions < upto have had their n-gram inserted
++        self.pending = False  # the drafts now queued for verify came from lookup
++        self.pending_bucket = 0
++        self.last_t = None
++        self.ema_mtp = None
++        self.ema_lk = [None, None]  # [short match, long match]
++        self.skipped = 0
++        self.rounds = self.drafted = self.accepted = self.emitted = self.gated = 0
++
++
++def _get(state):
++    lk = getattr(state, "_p2_lookup", None)
++    if lk is None:
++        lk = _Lookup()
++        state._p2_lookup = lk
++    return lk
++
++
++def was_pending(state) -> bool:
++    lk = getattr(state, "_p2_lookup", None)
++    return bool(lk is not None and lk.pending)
++
++
++def observe(state, was_lookup: bool, k: int, m: int) -> None:
++    """Credit the cycle that just committed m+1 tokens to its draft source (wall time since the previous commit)."""
++    lk = _get(state)
++    now = time.perf_counter()
++    kind = "lookup" if was_lookup else "mtp"
++    first_at_width = k not in _SEEN_K[kind]
++    _SEEN_K[kind].add(k)
++    if lk.last_t is not None:
++        rate = (m + 1) / max(now - lk.last_t, 1e-6)
++        if was_lookup and first_at_width:
++            lk.rounds += 1; lk.drafted += k; lk.accepted += m; lk.emitted += m + 1
++        elif was_lookup:
++            b = lk.pending_bucket
++            e = lk.ema_lk[b]
++            lk.ema_lk[b] = rate if e is None else e + _ALPHA * (rate - e)
++            lk.rounds += 1
++            lk.drafted += k
++            lk.accepted += m
++            lk.emitted += m + 1
++        elif k > 0 and not first_at_width:
++            e = lk.ema_mtp
++            lk.ema_mtp = rate if e is None else e + _ALPHA * (rate - e)
++    lk.last_t = now
++    lk.pending = False
++
++
++def propose(gen_batch, state):
++    """Host-side lookup over prompt + committed output. Returns a list of draft ids, or None."""
++    lk = _get(state)
++    base = gen_batch.tokens[0]
++    tail = [q[0] for q in state.queue]
++    nb = len(base)
++    total = nb + len(tail)
++
++    def at(i):
++        return base[i] if i < nb else tail[i - nb]
++
++    n = NGRAM
++    if total <= n:
++        return None
++    # Index every n-gram whose end still has a continuation (end < total - 1).
++    idx = lk.idx
++    start = max(lk.upto, n - 1)
++    if start < total - 1:
++        if start < nb - 1:
++            # Bulk part inside the committed list: slice once instead of per-position lookups.
++            seg = base[start - n + 1 : min(nb, total - 1)]
++            for j in range(len(seg) - n + 1):
++                idx[tuple(seg[j : j + n])] = start + j
++            start = start + max(0, len(seg) - n + 1)
++        for i in range(start, total - 1):
++            idx[tuple(at(t) for t in range(i - n + 1, i + 1))] = i
++        lk.upto = total - 1
++    key = tuple(at(t) for t in range(total - n, total))
++    p = idx.get(key)
++    if p is None:
++        return None
++    # How far back the match runs (bucket for the gate).
++    run = n
++    while run < LONG_MATCH and p - run >= 0 and at(p - run) == at(total - 1 - run):
++        run += 1
++    bucket = 1 if run >= LONG_MATCH else 0
++    cont_end = min(p + 1 + (MAX_LONG if bucket else MAX_DRAFTS), total)
++    drafts = [at(t) for t in range(p + 1, cont_end)]
++    if not drafts:
++        return None
++    if GATE:
++        e_lk, e_mtp = lk.ema_lk[bucket], lk.ema_mtp
++        if e_lk is not None and e_mtp is not None and e_lk < e_mtp:
++            lk.skipped += 1
++            if lk.skipped % _REPROBE:
++                lk.gated += 1
++                return None
++    lk.pending = True
++    lk.pending_bucket = bucket
++    return drafts
++
++
++def set_drafts(state, drafts, vocab: int) -> None:
++    """Install lookup drafts as the next verify block (one-hot draft distributions)."""
++    import mlx.core as mx
++
++    toks = mx.array(drafts, dtype=mx.uint32)
++    onehot = mx.where(
++        mx.arange(vocab, dtype=mx.int32)[None, :] == toks.astype(mx.int32)[:, None],
++        mx.array(0.0, dtype=mx.float32),
++        mx.array(-float("inf"), dtype=mx.float32),
++    )
++    state.drafts = toks
++    # Empty draft_lps → accepted drafts emit the target row as their logprobs (block-drafter contract).
++    state.draft_lps = []
++    state.draft_accept_lps = [onehot[j] for j in range(len(drafts))]
++    mx.async_eval(state.drafts)
++
++
++def log_stats(uid, stats) -> None:
++    lk = getattr(stats, "_p2_lookup_ref", None)
++    if lk is None or not (lk.rounds or lk.gated):
++        return
++    logger.info(
++        "P2-LOOKUP[%s] rounds=%d drafted=%d accepted=%d (%.1f%%) tok/round=%.2f gated=%d ema_mtp=%s ema_lk=%s",
++        uid, lk.rounds, lk.drafted, lk.accepted, 100.0 * lk.accepted / max(lk.drafted, 1),
++        lk.emitted / max(lk.rounds, 1), lk.gated,
++        None if lk.ema_mtp is None else round(lk.ema_mtp, 1),
++        [None if e is None else round(e, 1) for e in lk.ema_lk],
++    )

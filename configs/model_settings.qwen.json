@@ -1,0 +1,1 @@
+{"version": 1, "models": {"Qwen3.8-Flash-Next-oQ6e-mtp": {"mtp_enabled": true, "mtp_fixed_depth": 3, "qwen4_ple_ssd_offload": false, "qwen35_oq_a8_enabled": false, "is_pinned": false}}}
