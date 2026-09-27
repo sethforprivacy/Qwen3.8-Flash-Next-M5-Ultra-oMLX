@@ -1,3 +1,5 @@
+> **History.** This page predates the recommended `main` profile (README). That profile adds the upstream PR stack (`patches/upstream-omlx-qwen4-stack.patch`) under the same lookup patch and is built by `scripts/install.sh`.
+
 # Optional: oMLX `main` built from source
 
 The lookup patch is rebased onto oMLX `main` @ [`f0d8428a`](https://github.com/jundot/omlx/commit/f0d8428a) as `patches/omlx-main-f0d8428a-qwen-lookup.patch`.

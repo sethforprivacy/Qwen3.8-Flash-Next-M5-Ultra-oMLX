@@ -18,3 +18,11 @@
 3. **After the gate fix**, two fresh installs, each with a freshly started server: edit · json · fix · diff · prose · new code =
    266.0 · 228.6 · 258.1 · 187.4 · 104.7 · 143.9 and 273.9 · 228.9 · 259.0 · 187.4 · 104.9 · 143.8 tok/s
    (published: 274.6 · 228.8 · 259.1 · 187.4 · 105.0 · 143.9). Greedy text was identical on all 6 tasks in both runs.
+
+## 2026-09-27: recommended profile (main + upstream Qwen4-Exp / MoE PR stack + lookup), from scratch
+
+1. `scripts/install.sh` into a fresh tree: every native kernel loads, and the tree is **identical** to the development branch.
+   Qwen/MoE test suites in that tree: 2,044 passed and 1 failed. The failure is `test_qwen35_verify_sdpa_split[5000]`, which passes on its own at every merge step: test-order state leakage, not a code defect.
+2. Full cell through `scripts/serve.sh`: prefill 3,030 · 4,481 · 4,733 · 4,510 · 4,243 tok/s at 2K–256K, fresh decode 140–141, warm 32K 0.43 s, ladder 150 · 160 · 171 · 191, reasoning 12/12, all qualify gates pass (vision, tool, 127K retrieval).
+3. Agent mix: T=0 edit 274.5 · JSON 229.5 · fix 256.5 · diff 185.4 · prose 104.7 · new code 146.6; T=0.6 edit 268.2 · JSON 228.6 · fix 253.4.
+4. KLD with the fresh tree's Python, against stock `main` f0d8428a: teacher-forced **0.0226** / top-1 0.9490 (main 0.0228 / 0.9483), decode-path **0.0268** / 0.9332 (main 0.0268 / 0.9332).
