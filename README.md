@@ -21,17 +21,18 @@ Companion recipe: [GLM-5.3-Flash on the same machine](https://github.com/sethfor
 
 ### Choosing an engine for Qwen on this machine
 
-Same suite and box, measured 2026-09-27:
+Same suite and box, measured 2026-09-27 (TensorFold re-measured on 0.3.4.1, which fixed its short-prompt prefill):
 
 | | fresh decode | edit turns | prefill 32K | 8 streams | KLD vs BF16 (lower is better) |
 |---|---|---|---|---|---|
 | **oMLX + this recipe** (oQ6e) | 147 | 275 | 3,579 | 193 | **0.023** |
 | mlx-serve 26.9.6 (its own mixed 4/8 checkpoint) | 160 | 331 | **3,840** | **236** | 0.035 |
-| TensorFold 0.3.4 (Vontra 4-bit) | **201** | **339** | 450 | 184 (no batching) | 0.128 |
+| TensorFold 0.3.4.1 (Vontra 4-bit) | **187** | **338** | 2,324 (689 at 128K) | 180 (no batching) | 0.128 |
 
 - This recipe gives the **best quality** of the three.
 - [mlx-serve](https://github.com/ddalcu/mlx-serve) is faster overall at slightly lower quality.
-- [TensorFold](https://github.com/ashhart/TensorFold) has the fastest single-stream decode, on a plain 4-bit checkpoint with ~5.5× the KLD and much slower prefill.
+- [TensorFold](https://github.com/ashhart/TensorFold) has the fastest single-stream decode, on a plain 4-bit checkpoint with ~5.5× the KLD.
+  Since 0.3.4.1 its prefill matches oMLX at 2K and is 35 % behind at 32K, but it falls to 689 tok/s at 128K and 391 at 256K, and it doesn't batch.
 
 ## What changes, and why
 
