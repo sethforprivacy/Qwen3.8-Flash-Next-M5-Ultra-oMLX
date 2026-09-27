@@ -9,6 +9,8 @@ Upstream #3958 split the MTP chain cycle, and the hook sits in the new `draft_ne
 | prefill 8K · 32K | ~3,300 · 3,381–3,567 | 3,300 · 3,579 | 3,286 · 3,785 | 3,293 · **3,879** |
 | gates | pass | pass | | 12/12 · all pass |
 
+**Heads-up:** upstream #3958 (on `main`) costs greedy MTP decode on M5 Ultra: −9 % at fixed depth 3, −3 % adaptive ([jundot/omlx#4021](https://github.com/jundot/omlx/issues/4021)). It helps top-k-sampled decoding. For greedy use, the rc1 DMG route is faster today.
+
 Single runs, and Qwen decode varies ±3–4 % between runs. `main` currently brings a little more prefill for Qwen, but no decode change for oQ6e:
 #3912's fused routed-expert decode only takes 4-bit experts.
 
