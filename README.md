@@ -30,19 +30,17 @@ A 128K-token prompt is read in ~29 s, and a 256K one in ~61 s. A warm follow-up 
 
 ### Choosing an engine for Qwen on this machine
 
-Same suite and box, measured 2026-09-27 (TensorFold re-measured on 0.3.4.1, which fixed its short-prompt prefill):
+Same suite and box. mlx-serve measured 2026-09-27; this recipe and TensorFold 0.3.6.1 on 2026-09-28:
 
 | | fresh decode | edit turns | prefill 32K | 8 streams | KLD vs BF16 (lower is better) |
 |---|---|---|---|---|---|
 | **oMLX + this recipe** (oQ6e) | 158–165 | 272 | **4,759** | 197 | **0.023** |
-| mlx-serve 26.9.6 (its own mixed 4/8 checkpoint) | 160 | 331 | 3,840 | **236** | 0.035 |
-| TensorFold 0.3.4.1 (Vontra 4-bit) | **187** | **338** | 2,324 (689 at 128K) | 180 (no batching) | 0.128 |
+| mlx-serve 26.9.6 (its own mixed 4/8 checkpoint) | 160 | 331 | 3,840 | 236 | 0.035 |
+| TensorFold 0.3.6.1 (Vontra 4-bit) | **183–197** | **437** | 2,826 (2,657 at 128K) | **327** | 0.128 |
 
-- This recipe gives the **best quality** of the three.
-- With the upstream PR stack, this recipe also has the **fastest prefill** here (4,759 tok/s at 32K).
-- [mlx-serve](https://github.com/ddalcu/mlx-serve) decodes faster, and batches better, at slightly lower quality.
-- [TensorFold](https://github.com/ashhart/TensorFold) has the fastest single-stream decode, on a plain 4-bit checkpoint with ~5.5× the KLD.
-  Since 0.3.4.1 its prefill matches oMLX at 2K and is 35 % behind at 32K, but it falls to 689 tok/s at 128K and 391 at 256K, and it doesn't batch.
+- This recipe gives the **best quality** of the three, and the fastest prefill (4,759 tok/s at 32K).
+- [TensorFold](https://github.com/ashhart/TensorFold) 0.3.6.1 is now the fastest decoder and batcher here: fresh decode +18 %, edit turns 1.6×, 1.7× at 8 streams. It's also exact under concurrency, with every stream equal to its solo output; here 3 of 8 are. That's on a plain 4-bit checkpoint with ~5.5× the KLD, and it prefills 1.1–2.0× slower.
+- [mlx-serve](https://github.com/ddalcu/mlx-serve) sits between the two, at slightly lower quality than this recipe.
 
 ## What changes, and why
 
