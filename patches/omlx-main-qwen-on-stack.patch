@@ -1,8 +1,8 @@
 diff --git a/omlx/patches/mlx_lm_mtp/batch_generator.py b/omlx/patches/mlx_lm_mtp/batch_generator.py
-index 71075fb9..05a49432 100644
+index 1864cf4a..6c11686d 100644
 --- a/omlx/patches/mlx_lm_mtp/batch_generator.py
 +++ b/omlx/patches/mlx_lm_mtp/batch_generator.py
-@@ -23,6 +23,8 @@ from collections import deque
+@@ -24,6 +24,8 @@ from collections import deque
  from dataclasses import dataclass, field
  from statistics import median
  from types import SimpleNamespace
@@ -11,7 +11,36 @@ index 71075fb9..05a49432 100644
  from typing import Any, Deque, Dict, List, Optional, Tuple
  
  from omlx.prefill_progress import get_prefill_tracker
-@@ -2901,6 +2903,8 @@ def _chain_next_drafts(
+@@ -50,6 +52,8 @@ def _set_verify_qmm_armed(flag: bool, *, row_exact: bool = False) -> None:
+ 
+ 
+ _ROW_EXACT_DISABLED = os.environ.get("OMLX_MTP_ROW_EXACT_VERIFY", "1").strip() == "0"
++_P2_ROW_EXACT_MAX_B = int(os.environ.get("OMLX_P2_ROW_EXACT_MAX_B", "1"))
++_P2_ROW_EXACT_MAX_ROWS = int(os.environ.get("OMLX_P2_ROW_EXACT_MAX_ROWS", "4"))
+ 
+ 
+ def _row_exact_verify(model: Any) -> bool:
+@@ -2097,7 +2101,18 @@ def _call_backbone_impl(
+     _rollback_mod.set_undo_armed(True)
+     # The affine verify qmm kernel is a Qwen-specific optimization. Keep the
+     # DeepSeek target on its architecture-native quantized linear path.
+-    _set_verify_qmm_armed(not dspark_verify, row_exact=_row_exact_verify(model))
++    # Phase-2 (mac-studio-m5-ultra, OMLX_P2_ROW_EXACT_MAX_B, default 1): row-exact verify reproduces a one-row decode per row, so a
++    # batched MTP verify of B streams x R rows runs B*R one-row matvecs and loses batching (M5 Ultra, Qwen3.8-Flash-Next oQ6e:
++    # c=4 173 -> 135, c=8 199 -> 108 tok/s). Arm it only for batches of at most N streams; larger batches keep the batched kernels.
++    # Likewise only up to OMLX_P2_ROW_EXACT_MAX_ROWS verify rows (default 4, an MTP depth-3 window): the row-exact window runs its
++    # rows one by one, so the 8-15-row verifies of prompt-lookup rounds are faster on the batched kernels (acceptance stays exact).
++    shape = tuple(getattr(inputs, "shape", ()))
++    streams = int(shape[0]) if len(shape) >= 2 else 1
++    rows = int(shape[-1]) if shape else 1
++    row_exact = (
++        _row_exact_verify(model) and streams <= _P2_ROW_EXACT_MAX_B and rows <= _P2_ROW_EXACT_MAX_ROWS
++    )
++    _set_verify_qmm_armed(not dspark_verify, row_exact=row_exact)
+     _set_dspark_target_verify(model, dspark_verify)
+     try:
+         result = model(inputs, **kwargs)
+@@ -2927,6 +2942,8 @@ def _chain_next_drafts(
      hidden_rows: Any,
      committed: Any,
      prev_buf: Optional[Any],
@@ -20,7 +49,7 @@ index 71075fb9..05a49432 100644
  ) -> None:
      """Rebuild committed MTP-head history and draft the next chain.
  
-@@ -2936,7 +2940,7 @@ def _chain_next_drafts(
+@@ -2962,7 +2979,7 @@ def _chain_next_drafts(
      procs = _proc_list(gen_batch)
  
      depth = state.controller.cur if state.controller is not None else state.depth
@@ -29,7 +58,7 @@ index 71075fb9..05a49432 100644
          # Depth-0 with a stateless head (no cache to keep warm, e.g. the
          # gemma4 assistant): skip the fold entirely — on fast backbones its
          # head forward + trunk norm is a measurable per-step tax (~15% of a
-@@ -2977,6 +2981,11 @@ def _chain_next_drafts(
+@@ -3003,6 +3020,11 @@ def _chain_next_drafts(
          )
      state.hist_offset += int(n)
  
@@ -41,7 +70,7 @@ index 71075fb9..05a49432 100644
      draft_toks: List[Any] = []
      draft_lps: List[Any] = []
      draft_accept_lps: List[Any] = []
-@@ -3622,6 +3631,8 @@ def _mtp_next(gen_batch: Any, state: _MtpState) -> Any:
+@@ -3648,6 +3670,8 @@ def _mtp_next(gen_batch: Any, state: _MtpState) -> Any:
  
  
  def _log_mtp_stats(uid: Any, stats: "_MtpStats", finish_reason: str) -> None:
@@ -50,7 +79,7 @@ index 71075fb9..05a49432 100644
      """Emit a one-line summary of MTP draft/verify activity for a finished sequence.
  
      Format chosen to match PR 990's headline metrics, plus component timings
-@@ -4108,8 +4119,8 @@ def _run_verify_cycle_chain(
+@@ -4134,8 +4158,8 @@ def _run_verify_cycle_chain(
  
      # --- stats ---
      state.stats.cycles += 1
@@ -61,7 +90,7 @@ index 71075fb9..05a49432 100644
          state.stats.depth_drafted.extend([0] * pad)
          state.stats.depth_accepted.extend([0] * pad)
      for j in range(k):
-@@ -4125,6 +4136,8 @@ def _run_verify_cycle_chain(
+@@ -4151,6 +4175,8 @@ def _run_verify_cycle_chain(
  
      accept_ms = (time.perf_counter() - cycle_t0) * 1000
  
@@ -70,7 +99,7 @@ index 71075fb9..05a49432 100644
      def draft_next():
          # --- MTP-head history + next draft chain (async-dispatched) ---
          t0 = time.perf_counter()
-@@ -4150,7 +4163,15 @@ def _run_verify_cycle_chain(
+@@ -4176,7 +4202,15 @@ def _run_verify_cycle_chain(
              else:
                  draft_jobs.append(job)
          elif draft_jobs is None:
@@ -87,7 +116,7 @@ index 71075fb9..05a49432 100644
          else:
              draft_jobs.append((gen_batch, state, hidden_rows, committed, prev_buf))
          state.next_main = next_main
-@@ -4194,7 +4215,7 @@ def _run_verify_cycle_chain(
+@@ -4220,7 +4254,7 @@ def _run_verify_cycle_chain(
          if materialize_boundary_emit:
              _materialize_mtp_boundary_emit(gen_batch, state)
              state.boundary_emit_pending = False

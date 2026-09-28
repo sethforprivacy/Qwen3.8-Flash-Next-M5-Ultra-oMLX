@@ -1,6 +1,6 @@
 #!/bin/zsh
-# RECOMMENDED profile: oMLX main @ f0d8428a built from source, plus open upstream Qwen4-Exp / MoE PRs (9 PRs, mostly jonathan308's,
-# pinned as one patch: see CREDITS.md for the PR heads) and this recipe's prompt-lookup patch on top. Native kernels included.
+# RECOMMENDED profile: oMLX main @ f0d8428a built from source, plus open upstream Qwen4-Exp / MoE PRs (jonathan308, jerryfane, yoyo930021;
+# pinned as one patch: see CREDITS.md for the PR heads) and this recipe's patch on top (prompt-lookup MTP, row-exact verify gates).
 #   scripts/install.sh [~/omlx-qwen-src]
 # Needs git, Xcode (with its Metal toolchain) and Python 3.11-3.13.
 set -euo pipefail
@@ -16,7 +16,7 @@ cd $dest
 git checkout -q f0d8428a
 git apply $here/../patches/upstream-omlx-qwen4-stack.patch
 git add -A && git -c user.name=recipe -c user.email=recipe@localhost commit -q -m "upstream Qwen4-Exp / MoE PR stack"
-git apply $here/../patches/omlx-main-f0d8428a-qwen-lookup.patch
+git apply $here/../patches/omlx-main-qwen-on-stack.patch
 git add -A && git -c user.name=recipe -c user.email=recipe@localhost commit -q -m "mac-studio-m5-ultra recipe patch"
 $py -m venv .venv
 . .venv/bin/activate

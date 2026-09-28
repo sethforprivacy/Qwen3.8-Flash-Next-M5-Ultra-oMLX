@@ -1,6 +1,15 @@
 # Changelog
 
 
+
+## 2026-09-28: recommended profile v3, decode
+
+- **Upstream stack updated:** it now carries jerryfane's #4041 chain (#4023 #4024 #4038 #4039 #4041: bit-exact MTP verify, fused one-token decode, fused verify windows) in place of jonathan308's #3982, which conflicts with it.
+- **Recipe patch** (`patches/omlx-main-qwen-on-stack.patch`): lookup plus two row-exact verify gates.
+  - Row-exact at B>1 cost 23–48 % at 4–8 streams.
+  - Row-exact on lookup's long verifies cost 27 % on edit turns.
+- **Result:** fresh decode 158–165 (v2: 140–141), prose / new code +9–12 %, edit turns unchanged, 8 streams 192. Prefill −3 % (3,057 · 4,300 · 4,615 · 4,379 · 4,128). KLD identical to stock `main`. Validated from scratch.
+
 ## 2026-09-27 (night): recommended profile on oMLX `main` + upstream PR stack
 
 - **New recommended profile:** oMLX `main` @ f0d8428a + nine open upstream Qwen4-Exp / MoE PRs (mostly jonathan308's; pinned in `patches/upstream-omlx-qwen4-stack.patch`) + the lookup patch, built by `scripts/install.sh`.

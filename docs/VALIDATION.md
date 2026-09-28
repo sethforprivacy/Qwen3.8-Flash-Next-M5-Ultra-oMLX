@@ -26,3 +26,18 @@
 2. Full cell through `scripts/serve.sh`: prefill 3,030 · 4,481 · 4,733 · 4,510 · 4,243 tok/s at 2K–256K, fresh decode 140–141, warm 32K 0.43 s, ladder 150 · 160 · 171 · 191, reasoning 12/12, all qualify gates pass (vision, tool, 127K retrieval).
 3. Agent mix: T=0 edit 274.5 · JSON 229.5 · fix 256.5 · diff 185.4 · prose 104.7 · new code 146.6; T=0.6 edit 268.2 · JSON 228.6 · fix 253.4.
 4. KLD with the fresh tree's Python, against stock `main` f0d8428a: teacher-forced **0.0226** / top-1 0.9490 (main 0.0228 / 0.9483), decode-path **0.0268** / 0.9332 (main 0.0268 / 0.9332).
+
+## 2026-09-28: recommended profile v3 (upstream stack with jerryfane's #4041 chain + recipe patch), from scratch
+
+- **Build:** `scripts/install.sh` into a fresh tree. It is identical to the development branch (`qwen-stack-d`), and every native kernel loads.
+- **Tests:** 2,426 passed and 1 failed. The failure is the same order-dependent `test_qwen35_verify_sdpa_split[5000]`, which passes on its own: 112 passed.
+- **Cell** (`scripts/serve.sh`):
+  - prefill 3,057 · 4,300 · 4,615 · 4,379 · 4,128 tok/s at 2K–256K;
+  - decode fresh 164.8 / 158.0 and code 2K 144.9 / 170.2 (passes 1 / 2);
+  - warm 32K 0.42 s;
+  - ladder 173 · 169 · 175 · 192;
+  - reasoning 12/12, all qualify gates pass (vision, tool, 127K).
+- **Agent mix:**
+  - T=0: edit 272.8 · JSON 230.1 · fix 260.4 · diff 169.1 · prose 114.7 · new code 164.0;
+  - T=0.6: edit 268.2 · JSON 228.3 · fix 252.3.
+- **KLD against stock `main`:** teacher-forced 0.0226 (main 0.0228), decode-path 0.0268 (main 0.0268).
