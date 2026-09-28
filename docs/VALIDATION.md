@@ -41,3 +41,13 @@
   - T=0: edit 272.8 · JSON 230.1 · fix 260.4 · diff 169.1 · prose 114.7 · new code 164.0;
   - T=0.6: edit 268.2 · JSON 228.3 · fix 252.3.
 - **KLD against stock `main`:** teacher-forced 0.0226 (main 0.0228), decode-path 0.0268 (main 0.0268).
+
+## 2026-09-28: recommended profile v4 (v3 + #3982's NAX HC prefill and PLE conv), from scratch
+
+- **Build:** `scripts/install.sh` into a fresh tree. It is identical to the development branch (`qwen-stack-v4`), and every native kernel loads.
+- **Tests:** 2,476 passed, plus the known order-dependent `test_qwen35_verify_sdpa_split[5000]`, which passes on its own. #3982's own `test_model_prefill_logits_are_bit_identical` (NAX HC prefill with the chain's deferred writes) passes.
+- **Served** (`scripts/serve.sh`): reasoning 12/12, all qualify gates pass (vision, tool, 127K retrieval at 4,504 tok/s), decode fresh 164.3, code 2K 145.0, prefill 3,084 · 4,535 · 4,725 · 4,496 at 2K–128K.
+- **Full cell on the same tree** (development worktree; `bench/phase2/qwen-stack-e/`):
+  - prefill 3,110 · 4,571 · 4,734 · 4,505 · 4,259, fresh 163–166, ladder 172 · 169 · 173 · 193;
+  - agent T=0: edit 272.1 · JSON 229.6 · fix 260.8 · prose 115.1 · new code 164.7;
+  - teacher-forced KLD 0.0226 / top-1 0.9490, identical to v2 / v3 and to stock `main` (0.0228).

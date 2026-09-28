@@ -2,6 +2,12 @@
 
 
 
+
+## 2026-09-28 (later): recommended profile v4
+
+- **#3982 back in:** jonathan308's NAX HC prefill projections and depthwise PLE conv, cherry-picked onto jerryfane's decode chain. Its deferred-write commit is superseded by the chain's own, and #3982's bit-identity tests pass with it.
+- **Result:** prefill back to 3,110 · 4,571 · 4,734 · 4,505 · 4,259 tok/s (v3: 3,057 · 4,300 · 4,615 · 4,379 · 4,128) with v3's decode (163–166 fresh). Agent turns and concurrency are unchanged, and KLD is identical.
+
 ## 2026-09-28: recommended profile v3, decode
 
 - **Upstream stack updated:** it now carries jerryfane's #4041 chain (#4023 #4024 #4038 #4039 #4041: bit-exact MTP verify, fused one-token decode, fused verify windows) in place of jonathan308's #3982, which conflicts with it.
