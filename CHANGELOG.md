@@ -3,6 +3,16 @@
 
 
 
+
+## 2026-09-28 (evening): recommended profile rebased onto oMLX `main`
+
+- oMLX merged the Qwen4-Exp prefill stack, jerryfane's decode chain and the MoE PRs into `main`, reconciled #3982 with the chain, and adopted our single-stream row-exact gate (3c5f1d41).
+- The recipe now builds `main` @ a98d8c8c + the still-open #4030 + the recipe patch, which now holds only lookup plus the ≤4-row row-exact limit.
+- Validated from scratch:
+  - prefill 3,357 · 4,549 · 4,759 · 4,510 · 4,214 tok/s at 2K–256K; decode 158–165;
+  - agent edit turns 272 / 261 / 225; warm 32K 0.37 s; ladder 173 · 172 · 184 · 197;
+  - 12/12 and all gates; KLD identical.
+
 ## 2026-09-28 (later): recommended profile v4
 
 - **#3982 back in:** jonathan308's NAX HC prefill projections and depthwise PLE conv, cherry-picked onto jerryfane's decode chain. Its deferred-write commit is superseded by the chain's own, and #3982's bit-identity tests pass with it.

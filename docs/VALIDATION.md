@@ -51,3 +51,16 @@
   - prefill 3,110 · 4,571 · 4,734 · 4,505 · 4,259, fresh 163–166, ladder 172 · 169 · 173 · 193;
   - agent T=0: edit 272.1 · JSON 229.6 · fix 260.8 · prose 115.1 · new code 164.7;
   - teacher-forced KLD 0.0226 / top-1 0.9490, identical to v2 / v3 and to stock `main` (0.0228).
+
+## 2026-09-28: recommended profile rebased onto oMLX `main` @ a98d8c8c (+ #4030 + recipe patch), from scratch
+
+- **Build:** `scripts/install.sh` into a fresh tree. It is identical to the development branch (`qwen-v5`), and every native kernel loads.
+- **Tests:** Qwen / MoE suites 2,440 passed, plus the known order-dependent `test_qwen35_verify_sdpa_split[5000]`.
+- **Cell:**
+  - prefill 3,357 · 4,549 · 4,759 · 4,510 · 4,214; decode fresh 164.8 / 157.9, code 2K 130.0 / 172.3;
+  - warm 8K · 32K 0.26 · 0.37 s; ladder 173 · 172 · 184 · 197;
+  - reasoning 12/12, all qualify gates pass (vision, tool, 127K).
+- **Agent mix:**
+  - T=0: edit 272.2 · JSON 225.0 · fix 260.7 · diff 181.0 · prose 118.2 · new code 154.6;
+  - T=0.6: edit 268.6 · JSON 230.2 · fix 253.9.
+- **KLD:** teacher-forced 0.0226 / top-1 0.9490, decode-path 0.0268 / 0.9332, both identical to earlier profiles and to stock `main`.
